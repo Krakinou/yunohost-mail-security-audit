@@ -4,6 +4,7 @@
 # Script d'alerte temps réel - Sécurité Mail
 # Auteur : Communauté YunoHost
 # Licence : MIT
+# Repository : https://github.com/gamersalpha/yunohost-mail-security-audit
 # Description : Envoie une alerte immédiate en cas d'attaque massive
 # ===================================================================
 
@@ -35,9 +36,13 @@ if [ -f "$LOCK_FILE" ]; then
 fi
 touch "$LOCK_FILE"
 
-# Analyser la dernière heure
+# Analyser la dernière fenêtre de temps (TIME_WINDOW minutes)
 TIME_AGO=$(date -d "$TIME_WINDOW minutes ago" '+%Y-%m-%d %H:%M')
-ATTEMPTS=$(grep "$TIME_AGO" "$LOG_FILE" 2>/dev/null | grep "auth=0/1" | wc -l)
+
+# Compter les tentatives sur tous les logs disponibles
+ATTEMPTS=$(cat /var/log/mail.log /var/log/mail.log.1 2>/dev/null | \
+    awk -v time_ago="$TIME_AGO" '$0 >= time_ago' | \
+    grep "auth=0/1" | wc -l)
 
 # Si le nombre de tentatives dépasse le seuil
 if [ "$ATTEMPTS" -gt "$THRESHOLD_ATTEMPTS" ]; then
@@ -45,8 +50,9 @@ if [ "$ATTEMPTS" -gt "$THRESHOLD_ATTEMPTS" ]; then
     HOSTNAME=$(hostname -f)
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
     
-    # Top 5 IPs de la dernière heure
-    TOP_IPS=$(grep "$TIME_AGO" "$LOG_FILE" 2>/dev/null | \
+    # Top 5 IPs de la dernière fenêtre
+    TOP_IPS=$(cat /var/log/mail.log /var/log/mail.log.1 2>/dev/null | \
+        awk -v time_ago="$TIME_AGO" '$0 >= time_ago' | \
         grep "auth=0/1" | \
         grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | \
         sort | uniq -c | sort -rn | head -5)
@@ -65,6 +71,9 @@ if [ "$ATTEMPTS" -gt "$THRESHOLD_ATTEMPTS" ]; then
         fi
     done
     
+    # Taux d'attaque par minute
+    RATE_PER_MIN=$(echo "scale=1; $ATTEMPTS / $TIME_WINDOW" | bc)
+    
     # Construire le message d'alerte
     MESSAGE="🚨 ALERTE SÉCURITÉ - Attaque en cours détectée !
 
@@ -73,9 +82,11 @@ Heure : $TIMESTAMP
 
 📊 STATISTIQUES DES $TIME_WINDOW DERNIÈRES MINUTES :
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Tentatives d'authentification échouées : $ATTEMPTS
-- Seuil configuré : $THRESHOLD_ATTEMPTS
-- IPs bannies par Fail2ban : $BANNED_TOTAL
+• Tentatives d'authentification échouées : $ATTEMPTS
+• Seuil configuré : $THRESHOLD_ATTEMPTS
+• Dépassement : +$(( ATTEMPTS - THRESHOLD_ATTEMPTS )) tentatives
+• Taux d'attaque : $RATE_PER_MIN tentatives/minute
+• IPs bannies par Fail2ban : $BANNED_TOTAL
 
 🎯 TOP 5 DES IPS ATTAQUANTES :
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -87,26 +98,43 @@ $(echo -e "$BANNED_LIST")
 
 ⚡ ACTIONS RECOMMANDÉES :
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Vérifier les logs : sudo tail -100 /var/log/mail.log
-2. Vérifier Fail2ban : sudo fail2ban-client status postfix
-3. Bloquer manuellement si nécessaire : sudo fail2ban-client set postfix banip X.X.X.X
+1. Vérifier les logs temps réel :
+   sudo tail -f /var/log/mail.log | grep auth=0/1
 
+2. Vérifier Fail2ban :
+   sudo fail2ban-client status postfix
+   sudo fail2ban-client status sasl
+
+3. Bloquer manuellement si nécessaire :
+   sudo fail2ban-client set postfix banip X.X.X.X
+
+4. Voir le rapport détaillé :
+   sudo /root/mail_security_audit_html.sh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Ce message est une alerte automatique générée par Mail Security Audit.
 Prochain envoi possible dans $COOLDOWN_MINUTES minutes (anti-spam).
 "
     
     # Envoyer l'alerte
     if [ -n "$ALERT_EMAIL" ]; then
-        echo "$MESSAGE" | mail -s "🚨 [URGENT] Attaque Mail Détectée - $HOSTNAME" "$ALERT_EMAIL"
-        
-        # Enregistrer le timestamp pour le cooldown
-        date +%s > "$COOLDOWN_FILE"
-        
-        # Logger
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Alerte temps réel envoyée : $ATTEMPTS tentatives en $TIME_WINDOW min" >> /var/log/mail_audit.log
+        if command -v mail &> /dev/null; then
+            echo "$MESSAGE" | mail -s "🚨 [URGENT] Attaque Mail Détectée - $HOSTNAME" "$ALERT_EMAIL"
+            
+            # Enregistrer le timestamp pour le cooldown
+            date +%s > "$COOLDOWN_FILE"
+            
+            # Logger
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Alerte temps réel envoyée : $ATTEMPTS tentatives en $TIME_WINDOW min (taux: $RATE_PER_MIN/min)" >> /var/log/mail_audit.log
+        else
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - ERREUR : commande 'mail' non disponible" >> /var/log/mail_audit.log
+        fi
     else
         echo "$(date '+%Y-%m-%d %H:%M:%S') - ERREUR : ALERT_EMAIL non configuré" >> /var/log/mail_audit.log
     fi
+else
+    # Pas d'alerte nécessaire - Logger l'état normal
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Vérification temps réel : $ATTEMPTS tentatives en $TIME_WINDOW min (seuil: $THRESHOLD_ATTEMPTS) - OK" >> /var/log/mail_audit.log
 fi
 
 # Supprimer le lock
