@@ -1,0 +1,43 @@
+# Fichiers temporaires générés par le script
+*.tmp
+*.log
+mail_security_report_*.html
+
+# Fichiers de configuration locaux (avec données sensibles)
+*.local
+.env
+config.local.sh
+
+# Logs du script
+/var/log/mail_audit.log
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE et éditeurs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Sauvegardes
+*.bak
+*.backup
+*.old
+
+# Fichiers de test
+test_*.sh
+debug_*.sh
+
+# Données sensibles (ne jamais commiter)
+*_private*
+*_secret*
+credentials.txt
+
+# Rapports exemples avec données réelles
+examples/*_real.png
+examples/*_production.png
