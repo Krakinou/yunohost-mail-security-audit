@@ -192,7 +192,7 @@ cat > "$HTML_FILE" << 'HTMLEOF'
                 <div class="stat-card success"><div class="stat-number">EXTERNAL_AUTH_PLACEHOLDER</div><div class="stat-label">Connexions externes</div></div>
             </div>
             <div class="section"><h2 class="section-title">🔔 Alertes de Sécurité</h2>ALERTS_PLACEHOLDER</div>
-            <div class="section"><h2 class="section-title">🎯 Top 5 des IPs Attaquantes</h2><div class="table-container"><table><thead><tr><th>Adresse IP</th><th>Tentatives</th><th>Statut</th></tr></thead><tbody>TOP_IPS_PLACEHOLDER</tbody></table></div></div>
+            <div class="section"><h2 class="section-title">🎯 Top 5 des IPs Attaquantes</h2><div class="table-container"><table><thead><tr><th>Adresse IP</th><th>Tentatives</th><th>Dernière activité</th><th>Statut</th></tr></thead><tbody>TOP_IPS_PLACEHOLDER</tbody></table></div></div>
             <div class="section"><h2 class="section-title">👥 Connexions Légitimes</h2><div class="table-container"><table><thead><tr><th>Utilisateur</th><th>Connexions</th><th>Type</th></tr></thead><tbody>TOP_USERS_PLACEHOLDER</tbody></table></div></div>
             <div class="section"><h2 class="section-title">📧 Top 5 des Expéditeurs</h2><div class="table-container"><table><thead><tr><th>Expéditeur</th><th>Mails envoyés</th><th>Type</th></tr></thead><tbody>TOP_SENDERS_PLACEHOLDER</tbody></table></div></div>
             <div class="section"><h2 class="section-title">📬 Top 5 des Destinataires</h2><div class="table-container"><table><thead><tr><th>Destinataire</th><th>Mails reçus</th><th>Type</th></tr></thead><tbody>TOP_RECIPIENTS_PLACEHOLDER</tbody></table></div></div>
@@ -235,12 +235,27 @@ else
 fi
 sed -i "s|ALERTS_PLACEHOLDER|$ALERTS_HTML|g" "$HTML_FILE"
 
-# Génération du tableau des IPs
+# Génération du tableau des IPs avec dernière activité
 TOP_IPS_HTML=""
 while IFS= read -r line; do
     if [ -n "$line" ]; then
         COUNT=$(echo "$line" | awk '{print $1}')
         IP=$(echo "$line" | awk '{print $2}')
+        
+        # Trouver la dernière occurrence de cette IP
+        LAST_SEEN=$(cat /var/log/mail.log /var/log/mail.log.1 2>/dev/null | \
+            grep "$IP" | grep "auth=0" | tail -1 | awk '{print $1, $2}' | \
+            sed 's/T/ /' | cut -d'.' -f1)
+        
+        # Si pas trouvé dans les logs actuels
+        if [ -z "$LAST_SEEN" ]; then
+            LAST_SEEN="Inconnue"
+        else
+            # Formater la date lisible (JJ/MM HH:MM)
+            LAST_SEEN=$(date -d "$LAST_SEEN" '+%d/%m %H:%M' 2>/dev/null || echo "$LAST_SEEN")
+        fi
+        
+        # Déterminer le badge selon le nombre de tentatives
         if [ "$COUNT" -gt 100 ]; then
             BADGE='<span class="badge badge-danger">Critique</span>'
         elif [ "$COUNT" -gt 50 ]; then
@@ -248,10 +263,11 @@ while IFS= read -r line; do
         else
             BADGE='<span class="badge badge-success">Normal</span>'
         fi
-        TOP_IPS_HTML+="<tr><td><strong>$IP</strong></td><td>$COUNT</td><td>$BADGE</td></tr>"
+        
+        TOP_IPS_HTML+="<tr><td><strong>$IP</strong></td><td>$COUNT</td><td>$LAST_SEEN</td><td>$BADGE</td></tr>"
     fi
 done <<< "$TOP_IPS"
-[ -z "$TOP_IPS_HTML" ] && TOP_IPS_HTML='<tr><td colspan="3" style="text-align:center; color: #10b981;">Aucune attaque détectée sur la période ✓</td></tr>'
+[ -z "$TOP_IPS_HTML" ] && TOP_IPS_HTML='<tr><td colspan="4" style="text-align:center; color: #10b981;">Aucune attaque détectée sur la période ✓</td></tr>'
 sed -i "s|TOP_IPS_PLACEHOLDER|$TOP_IPS_HTML|g" "$HTML_FILE"
 
 # Génération du tableau des utilisateurs
